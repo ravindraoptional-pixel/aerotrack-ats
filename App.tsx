@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { supabase } from './supabase';
 import {
   Kanban,
   Users,
@@ -2763,41 +2764,57 @@ function AnalyticsDashboardView({ jobs, candidates }) {
 // 7. MAIN APPLICATION SHELL
 // ============================================================================
 
-export default function App() {
+function AeroTrackWorkspace({ session, teamId }) {
   // Persistent State
-  const [jobs, setJobs] = useState(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEYS.JOBS);
-      return saved ? JSON.parse(saved) : INITIAL_JOBS;
-    } catch {
-      return INITIAL_JOBS;
-    }
-  });
-
-  const [candidates, setCandidates] = useState(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEYS.CANDIDATES);
-      return saved ? JSON.parse(saved) : INITIAL_CANDIDATES;
-    } catch {
-      return INITIAL_CANDIDATES;
-    }
-  });
+  const [jobs, setJobs] = useState([]);
+  const [candidates, setCandidates] = useState([]);
+  const [dataLoading, setDataLoading] = useState(true);
 
   useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEYS.JOBS, JSON.stringify(jobs));
-    } catch {
-      // Ignore storage quota errors
+    let alive = true;
+    async function loadWorkspace() {
+      setDataLoading(true);
+      const [jobResult, candidateResult] = await Promise.all([
+        supabase.from('jobs').select('data').eq('team_id', teamId),
+        supabase.from('candidates').select('data').eq('team_id', teamId),
+      ]);
+      if (!alive) return;
+      if (jobResult.error || candidateResult.error) {
+        showLoadError(jobResult.error || candidateResult.error);
+      } else {
+        setJobs((jobResult.data || []).map((row) => row.data));
+        setCandidates((candidateResult.data || []).map((row) => row.data));
+      }
+      setDataLoading(false);
     }
-  }, [jobs]);
+    loadWorkspace();
+    const channel = supabase.channel(`aerotrack-team-${teamId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'jobs', filter: `team_id=eq.${teamId}` }, loadWorkspace)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'candidates', filter: `team_id=eq.${teamId}` }, loadWorkspace)
+      .subscribe();
+    return () => { alive = false; supabase.removeChannel(channel); };
+  }, [teamId]);
 
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEYS.CANDIDATES, JSON.stringify(candidates));
-    } catch {
-      // Ignore storage quota errors
-    }
-  }, [candidates]);
+  const actor = session?.user?.email || 'Team member';
+  const saveCandidate = async (candidate, isNew = false) => {
+    const data = { ...candidate, updatedBy: actor, updatedAt: new Date().toISOString(), ...(isNew ? { createdBy: actor, createdAt: new Date().toISOString() } : {}) };
+    const query = isNew
+      ? supabase.from('candidates').insert({ team_id: teamId, data })
+      : supabase.from('candidates').update({ data }).eq('team_id', teamId).eq('data->>id', candidate.id);
+    const { error } = await query;
+    if (error) showToast(`Could not save candidate: ${error.message}`, 'warning');
+    return !error;
+  };
+  const saveJob = async (job, isNew = false) => {
+    const data = { ...job, updatedBy: actor, updatedAt: new Date().toISOString(), ...(isNew ? { createdBy: actor, createdAt: new Date().toISOString() } : {}) };
+    const query = isNew
+      ? supabase.from('jobs').insert({ team_id: teamId, data })
+      : supabase.from('jobs').update({ data }).eq('team_id', teamId).eq('data->>id', job.id);
+    const { error } = await query;
+    if (error) showToast(`Could not save job: ${error.message}`, 'warning');
+    return !error;
+  };
+  const showLoadError = (error) => showToast(`Could not load shared workspace: ${error.message}`, 'warning');
 
   // Navigation & Global Filters
   const [activeTab, setActiveTab] = useState('Pipeline');
@@ -2857,36 +2874,49 @@ export default function App() {
   }, [candidates, jobs, selectedJobFilter, searchQuery]);
 
   // Handlers
-  const handleMoveStage = (candidateId, newStage) => {
-    setCandidates((prev) =>
-      prev.map((c) => (c.id === candidateId ? { ...c, stage: newStage } : c))
-    );
+  const handleMoveStage = async (candidateId, newStage) => {
+    const current = candidates.find((c) => c.id === candidateId);
+    if (!current) return;
+    const updated = { ...current, stage: newStage };
+    if (await saveCandidate(updated)) setCandidates((prev) => prev.map((c) => c.id === candidateId ? updated : c));
   };
 
-  const handleAddCandidate = (newCandidate) => {
-    setCandidates((prev) => [newCandidate, ...prev]);
-    showToast(`${newCandidate.name} added to Applied pipeline (${newCandidate.matchScore}% match).`, 'success');
+  const handleAddCandidate = async (newCandidate) => {
+    const data = { ...newCandidate, createdBy: actor, updatedBy: actor };
+    if (await saveCandidate(data, true)) {
+      setCandidates((prev) => [data, ...prev]);
+      showToast(`${newCandidate.name} added to Applied pipeline (${newCandidate.matchScore}% match).`, 'success');
+    }
   };
 
-  const handleUpdateCandidate = (updated) => {
-    setCandidates((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
+  const handleUpdateCandidate = async (updated) => {
+    const data = { ...updated, updatedBy: actor };
+    if (await saveCandidate(data)) setCandidates((prev) => prev.map((c) => (c.id === data.id ? data : c)));
   };
 
-  const handleDeleteCandidate = (candidateId) => {
+  const handleDeleteCandidate = async (candidateId) => {
+    const { error } = await supabase.from('candidates').delete().eq('team_id', teamId).eq('data->>id', candidateId);
+    if (error) return showToast(`Could not delete candidate: ${error.message}`, 'warning');
     setCandidates((prev) => prev.filter((c) => c.id !== candidateId));
     showToast('Candidate removed from pipeline.', 'info');
   };
 
-  const handleCreateJob = (newJob) => {
-    setJobs((prev) => [newJob, ...prev]);
-    showToast(`Requisition "${newJob.title}" created.`, 'success');
+  const handleCreateJob = async (newJob) => {
+    const data = { ...newJob, createdBy: actor, updatedBy: actor };
+    if (await saveJob(data, true)) {
+      setJobs((prev) => [data, ...prev]);
+      showToast(`Requisition "${newJob.title}" created.`, 'success');
+    }
   };
 
-  const handleUpdateJobStatus = (jobId, newStatus) => {
-    setJobs((prev) =>
-      prev.map((j) => (j.id === jobId ? { ...j, status: newStatus } : j))
-    );
-    showToast(`Requisition status updated to ${newStatus}.`, 'info');
+  const handleUpdateJobStatus = async (jobId, newStatus) => {
+    const current = jobs.find((j) => j.id === jobId);
+    if (!current) return;
+    const updated = { ...current, status: newStatus };
+    if (await saveJob(updated)) {
+      setJobs((prev) => prev.map((j) => (j.id === jobId ? updated : j)));
+      showToast(`Requisition status updated to ${newStatus}.`, 'info');
+    }
   };
 
   const handleExportCsv = () => {
@@ -2948,14 +2978,8 @@ export default function App() {
   };
 
   const handleResetDemoData = () => {
-    setJobs(INITIAL_JOBS);
-    setCandidates(INITIAL_CANDIDATES);
-    setSelectedJobFilter('ALL');
-    setSearchQuery('');
     setConfirmReset(false);
-    localStorage.setItem(STORAGE_KEYS.JOBS, JSON.stringify(INITIAL_JOBS));
-    localStorage.setItem(STORAGE_KEYS.CANDIDATES, JSON.stringify(INITIAL_CANDIDATES));
-    showToast('Workspace reset to default aerospace demo data.', 'info');
+    showToast('Demo reset is disabled in the shared team workspace.', 'info');
   };
 
   const selectedCandidate = useMemo(
@@ -2971,6 +2995,7 @@ export default function App() {
   const navItems = [
     { id: 'Pipeline', label: 'Pipeline', icon: Kanban, badge: filteredCandidates.length },
     { id: 'Candidates', label: 'Candidates', icon: Users, badge: null },
+    { id: 'CVs', label: 'CVs', icon: FileText, badge: candidates.filter((c) => c.resumePath).length },
     {
       id: 'Jobs',
       label: 'Jobs',
@@ -2979,6 +3004,8 @@ export default function App() {
     },
     { id: 'Analytics', label: 'Analytics', icon: BarChart3, badge: null },
   ];
+
+  if (dataLoading) return <div className="min-h-screen grid place-items-center bg-[#F8FAFC] text-slate-600 text-sm">Loading your shared AeroTrack workspace…</div>;
 
   return (
     <div className="min-h-screen bg-[#F8FAFC] text-slate-900 flex font-sans antialiased">
@@ -3205,6 +3232,7 @@ export default function App() {
             <h1 className="text-lg font-bold tracking-tight text-[#0F1B2D]">
               {activeTab === 'Pipeline' && 'Candidate Acquisition Pipeline'}
               {activeTab === 'Candidates' && 'Talent Directory'}
+              {activeTab === 'CVs' && 'CV Library'}
               {activeTab === 'Jobs' && 'Job Requisitions & Career Portal'}
               {activeTab === 'Analytics' && 'Recruitment Funnel & Telemetry'}
             </h1>
@@ -3250,6 +3278,10 @@ export default function App() {
               onOpenCreateJob={() => setIsCreateJobOpen(true)}
               onOpenCareerPortal={() => setIsCareerPortalOpen(true)}
             />
+          )}
+
+          {activeTab === 'CVs' && (
+            <CvLibraryView candidates={candidates} teamId={teamId} actor={actor} onUploaded={(candidate) => setCandidates((prev) => [candidate, ...prev])} showToast={showToast} />
           )}
 
           {activeTab === 'Analytics' && (
@@ -3303,4 +3335,106 @@ export default function App() {
       )}
     </div>
   );
+}
+
+function CvLibraryView({ candidates, teamId, actor, onUploaded, showToast }) {
+  const [busy, setBusy] = useState(false);
+  const cvCandidates = candidates.filter((candidate) => candidate.resumePath);
+
+  const uploadFiles = async (event) => {
+    const files = Array.from(event.target.files || []);
+    if (!files.length) return;
+    setBusy(true);
+    for (const file of files) {
+      const ext = file.name.split('.').pop()?.toLowerCase();
+      if (!['pdf', 'doc', 'docx'].includes(ext)) {
+        showToast(`${file.name}: only PDF, DOC and DOCX files are supported.`, 'warning');
+        continue;
+      }
+      const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const path = `${teamId}/${crypto.randomUUID()}-${safeName}`;
+      const { error: uploadError } = await supabase.storage.from('candidate-cvs').upload(path, file, { upsert: false });
+      if (uploadError) {
+        showToast(`Upload failed for ${file.name}: ${uploadError.message}`, 'warning');
+        continue;
+      }
+      const candidate = {
+        id: `cv-${crypto.randomUUID()}`,
+        name: file.name.replace(/\.[^.]+$/, ''), email: '', phone: '', location: '',
+        currentRole: '', experienceYears: 0, jobId: '', stage: 'Applied', matchScore: 0,
+        skills: [], source: 'CV Upload', appliedDate: new Date().toISOString().slice(0, 10),
+        notes: [], resumePath: path, resumeName: file.name, createdBy: actor, updatedBy: actor,
+      };
+      const { error: rowError } = await supabase.from('candidates').insert({ team_id: teamId, data: candidate });
+      if (rowError) {
+        await supabase.storage.from('candidate-cvs').remove([path]);
+        showToast(`CV uploaded but candidate record failed: ${rowError.message}`, 'warning');
+        continue;
+      }
+      onUploaded(candidate);
+      showToast(`${file.name} uploaded to the shared CV library.`, 'success');
+    }
+    event.target.value = '';
+    setBusy(false);
+  };
+
+  const openCv = async (path, download = false) => {
+    const { data, error } = await supabase.storage.from('candidate-cvs').createSignedUrl(path, 60, { download });
+    if (error) return showToast(`Could not open CV: ${error.message}`, 'warning');
+    window.open(data.signedUrl, '_blank', 'noopener,noreferrer');
+  };
+
+  return <div className="space-y-5">
+    <div className="rounded-xl border border-slate-200 bg-white p-5 flex flex-wrap items-center justify-between gap-4">
+      <div><h2 className="font-semibold text-slate-900">Shared CV Library</h2><p className="text-sm text-slate-500 mt-1">Upload CVs here. Your whole team can access them from AeroTrack.</p></div>
+      <label className={`inline-flex items-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold cursor-pointer ${busy ? 'bg-slate-200 text-slate-500' : 'bg-[#19C3A6] text-[#0F1B2D] hover:bg-[#14A38B]'}`}>
+        <FileText className="w-4 h-4" /> {busy ? 'Uploading…' : 'Upload CVs'}
+        <input type="file" className="hidden" multiple accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document" disabled={busy} onChange={uploadFiles} />
+      </label>
+    </div>
+    <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
+      <div className="px-5 py-4 border-b border-slate-100 flex justify-between"><h3 className="font-semibold text-slate-900">Uploaded CVs</h3><span className="text-xs text-slate-500">{cvCandidates.length} files</span></div>
+      {cvCandidates.length === 0 ? <div className="p-10 text-center text-sm text-slate-500">No CVs uploaded yet. Use Upload CVs to add the first one.</div> : <div className="divide-y divide-slate-100">{cvCandidates.map((candidate) => <div key={candidate.id} className="px-5 py-4 flex flex-wrap items-center justify-between gap-3"><div className="flex items-center gap-3 min-w-0"><div className="w-9 h-9 rounded-lg bg-teal-50 text-teal-700 grid place-items-center"><FileText className="w-4 h-4" /></div><div className="min-w-0"><p className="text-sm font-medium text-slate-900 truncate">{candidate.resumeName || candidate.name}</p><p className="text-xs text-slate-500">Added by {candidate.createdBy || 'Team member'}</p></div></div><button onClick={() => openCv(candidate.resumePath)} className="text-sm font-medium text-teal-700 hover:text-teal-900">View CV</button></div>)}</div>}
+    </div>
+  </div>;
+}
+
+function LoginScreen() {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const submit = async (event) => {
+    event.preventDefault(); setBusy(true); setError('');
+    const { error: authError } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
+    if (authError) setError(authError.message);
+    setBusy(false);
+  };
+  return <div className="min-h-screen bg-[#0F1B2D] grid place-items-center p-4"><form onSubmit={submit} className="w-full max-w-md bg-white rounded-2xl p-8 shadow-2xl"><div className="flex items-center gap-3 mb-8"><div className="w-11 h-11 rounded-xl bg-[#19C3A6] grid place-items-center text-[#0F1B2D]"><Compass className="w-6 h-6" /></div><div><h1 className="font-bold text-xl text-[#0F1B2D] tracking-wide">AeroTrack</h1><p className="text-xs uppercase tracking-widest text-teal-700">Talent Telemetry</p></div></div><h2 className="text-lg font-semibold text-slate-900">Sign in to your workspace</h2><p className="text-sm text-slate-500 mt-1 mb-6">Use your HR Footprints team account.</p><label className="block text-xs font-semibold text-slate-600 mb-1">Email</label><input required type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2.5 mb-4 text-sm" placeholder="you@company.com"/><label className="block text-xs font-semibold text-slate-600 mb-1">Password</label><input required type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2.5 mb-4 text-sm" placeholder="Your password"/>{error && <p className="text-sm text-rose-600 mb-3">{error}</p>}<button disabled={busy} className="w-full rounded-lg bg-[#19C3A6] hover:bg-[#14A38B] disabled:opacity-60 py-3 text-sm font-bold text-[#0F1B2D]">{busy ? 'Signing in…' : 'Sign in'}</button></form></div>;
+}
+
+export default function App() {
+  const [session, setSession] = useState(null);
+  const [teamId, setTeamId] = useState(null);
+  const [checking, setChecking] = useState(true);
+  const [membershipError, setMembershipError] = useState('');
+  useEffect(() => {
+    let alive = true;
+    const load = async (currentSession) => {
+      if (!currentSession) { if (alive) { setSession(null); setTeamId(null); setChecking(false); } return; }
+      const { data, error } = await supabase.from('team_members').select('team_id').eq('user_id', currentSession.user.id).limit(1).maybeSingle();
+      if (!alive) return;
+      setSession(currentSession);
+      if (error || !data?.team_id) { setTeamId(null); setMembershipError(error?.message || 'Your account is not assigned to a team. Ask your administrator to check team membership.'); }
+      else { setTeamId(data.team_id); setMembershipError(''); }
+      setChecking(false);
+    };
+    supabase.auth.getSession().then(({ data }) => load(data.session));
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => { setChecking(true); load(nextSession); });
+    return () => { alive = false; listener.subscription.unsubscribe(); };
+  }, []);
+  if (checking) return <div className="min-h-screen grid place-items-center bg-[#0F1B2D] text-white text-sm">Checking AeroTrack login…</div>;
+  if (!session) return <LoginScreen />;
+  if (!teamId) return <div className="min-h-screen grid place-items-center bg-[#F8FAFC] p-6"><div className="max-w-lg rounded-xl border bg-white p-6 text-center"><h2 className="font-semibold text-slate-900">Team access not configured</h2><p className="text-sm text-slate-600 mt-2">{membershipError}</p><button onClick={() => supabase.auth.signOut()} className="mt-5 rounded-lg bg-[#0F1B2D] text-white px-4 py-2 text-sm">Sign out</button></div></div>;
+  return <><div className="fixed top-3 right-4 z-50 flex items-center gap-3 rounded-lg bg-white border border-slate-200 shadow-sm px-3 py-2"><span className="text-xs text-slate-600">{session.user.email}</span><button onClick={() => supabase.auth.signOut()} className="text-xs font-semibold text-rose-600">Sign out</button></div><AeroTrackWorkspace session={session} teamId={teamId} /></>;
 }
