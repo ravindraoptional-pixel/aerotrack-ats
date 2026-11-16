@@ -2761,6 +2761,58 @@ function AnalyticsDashboardView({ jobs, candidates }) {
 }
 
 // ============================================================================
+// 6A. HR FOOTPRINTS POSITION TRACKER & JD GENERATOR
+// ============================================================================
+function PositionTrackerView({ positions, onCreate, onUpdate, showToast }) {
+  const [form, setForm] = useState({ clientName: '', positionName: '', location: 'Hyderabad', noOfPositions: 1, budget: '', feePercent: 8.33, recruiter: '', currentStatus: 'Open', offeredCtc: '', actualFeePercent: '', actualRevenue: '' });
+  const [editingId, setEditingId] = useState(null);
+  const money = (value) => Number(value || 0).toLocaleString('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 });
+  const save = async (e) => {
+    e.preventDefault();
+    if (!form.clientName.trim() || !form.positionName.trim()) return showToast('Client and position title are required.', 'warning');
+    const potential = Number(form.offeredCtc || 0) * Number(form.noOfPositions || 1) * Number(form.feePercent || 0) / 100;
+    const actual = Number(form.offeredCtc || 0) * Number(form.actualFeePercent || form.feePercent || 0) / 100;
+    const row = { ...form, id: editingId || `pos-${crypto.randomUUID()}`, noOfPositions: Number(form.noOfPositions || 1), feePercent: Number(form.feePercent || 0), potentialRevenue: potential, actualRevenue: Number(form.actualRevenue || actual), updatedAt: new Date().toISOString() };
+    const ok = await onCreate(row, !!editingId);
+    if (ok) { setForm({ clientName: '', positionName: '', location: 'Hyderabad', noOfPositions: 1, budget: '', feePercent: 8.33, recruiter: '', currentStatus: 'Open', offeredCtc: '', actualFeePercent: '', actualRevenue: '' }); setEditingId(null); }
+  };
+  const startEdit = (p) => { setEditingId(p.id); setForm({ clientName: p.clientName || '', positionName: p.positionName || '', location: p.location || '', noOfPositions: p.noOfPositions || 1, budget: p.budget || '', feePercent: p.feePercent || 0, recruiter: p.recruiter || '', currentStatus: p.currentStatus || p.requisitionStatus || 'Open', offeredCtc: p.offeredCtc || '', actualFeePercent: p.actualFeePercent || '', actualRevenue: p.actualRevenue || '' }); window.scrollTo({ top: 0, behavior: 'smooth' }); };
+  const input = 'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:border-[#19C3A6]';
+  return <div className="space-y-5">
+    <form onSubmit={save} className="bg-white border border-slate-200 rounded-xl p-5 space-y-4">
+      <div className="flex items-center justify-between"><div><h2 className="font-semibold text-slate-900">{editingId ? 'Update position' : 'Add new position'}</h2><p className="text-xs text-slate-500 mt-1">Track client requirements, recruiter ownership and placement revenue</p></div>{editingId && <button type="button" onClick={() => { setEditingId(null); setForm({ clientName:'', positionName:'', location:'Hyderabad', noOfPositions:1, budget:'', feePercent:8.33, recruiter:'', currentStatus:'Open', offeredCtc:'', actualFeePercent:'', actualRevenue:'' }); }} className="text-xs text-rose-600">Cancel edit</button>}</div>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        {[['Client name','clientName','text'],['Position / role','positionName','text'],['Location','location','text'],['Vacancies','noOfPositions','number'],['Budget (e.g. 8–12 LPA)','budget','text'],['Fee %','feePercent','number'],['Recruiter','recruiter','text'],['Offered CTC (annual ₹)','offeredCtc','number'],['Actual fee %','actualFeePercent','number'],['Actual revenue (₹)','actualRevenue','number']].map(([label,key,type]) => <label key={key} className="text-xs font-semibold text-slate-600">{label}<input className={`${input} mt-1 font-normal`} type={type} min={type==='number'?'0':undefined} step={type==='number'?'any':undefined} value={form[key]} onChange={e=>setForm(v=>({...v,[key]:e.target.value}))} /></label>)}
+        <label className="text-xs font-semibold text-slate-600">Status<select className={`${input} mt-1 font-normal`} value={form.currentStatus} onChange={e=>setForm(v=>({...v,currentStatus:e.target.value}))}>{['Open','In Progress','On Hold','Closed','Cancelled'].map(x=><option key={x}>{x}</option>)}</select></label>
+      </div>
+      <div className="flex items-center justify-between flex-wrap gap-3"><p className="text-xs text-slate-500">Estimated revenue: <b className="text-slate-900">{money(Number(form.offeredCtc||0)*Number(form.noOfPositions||1)*Number(form.feePercent||0)/100)}</b></p><button className="rounded-lg bg-[#19C3A6] px-5 py-2.5 text-sm font-semibold text-[#0F1B2D]">{editingId?'Save position':'Add position'}</button></div>
+    </form>
+    <div className="bg-white border border-slate-200 rounded-xl overflow-hidden"><div className="px-5 py-4 border-b flex justify-between"><h3 className="font-semibold">Position register</h3><span className="text-xs text-slate-500">{positions.length} positions · {new Set(positions.map(p=>p.clientName).filter(Boolean)).size} clients</span></div>
+      <div className="overflow-x-auto"><table className="w-full text-sm"><thead className="bg-slate-50 text-xs text-slate-500"><tr>{['Client','Position','Location','Vacancies','Budget','Recruiter','Status','Potential revenue','Actual revenue',''].map(x=><th key={x} className="px-3 py-3 text-left whitespace-nowrap">{x}</th>)}</tr></thead><tbody className="divide-y divide-slate-100">{positions.map(p=><tr key={p.id}><td className="px-3 py-3 font-medium whitespace-nowrap">{p.clientName}</td><td className="px-3 py-3">{p.positionName}</td><td className="px-3 py-3">{p.location}</td><td className="px-3 py-3">{p.noOfPositions}</td><td className="px-3 py-3">{p.budget}</td><td className="px-3 py-3">{p.recruiter}</td><td className="px-3 py-3"><span className="rounded-full bg-slate-100 px-2 py-1 text-xs">{p.currentStatus || p.requisitionStatus || 'Open'}</span></td><td className="px-3 py-3 whitespace-nowrap">{money(p.potentialRevenue)}</td><td className="px-3 py-3 whitespace-nowrap">{money(p.actualRevenue)}</td><td className="px-3 py-3"><button onClick={()=>startEdit(p)} className="text-teal-700 font-medium">Edit</button></td></tr>)}</tbody></table></div>
+      {positions.length===0 && <p className="p-8 text-center text-sm text-slate-500">No positions found.</p>}
+    </div>
+  </div>;
+}
+
+function JobDescriptionGeneratorView({ savedJds, onSave, showToast }) {
+  const [title,setTitle]=useState(''); const [client,setClient]=useState(''); const [location,setLocation]=useState(''); const [prompt,setPrompt]=useState(''); const [jd,setJd]=useState(''); const [busy,setBusy]=useState(false);
+  const generate=()=>{ if(!title.trim()) return showToast('Enter a job title first.','warning'); setBusy(true); const brief=prompt.trim() || 'Define the role responsibilities, essential qualifications, experience and preferred skills based on the job title.'; setJd(`# ${title}\n\n**Client:** ${client || 'Confidential'}  \n**Location:** ${location || 'To be confirmed'}\n\n## About the role\nWe are seeking a ${title} to join our client’s team. The successful candidate will contribute to business objectives through strong domain knowledge, execution and collaboration.\n\n## Key responsibilities\n- Own day-to-day responsibilities associated with the ${title} role.\n- Coordinate with internal and external stakeholders to deliver agreed outcomes.\n- Maintain accurate documentation, reports and process compliance.\n- Identify opportunities to improve quality, efficiency and delivery.\n\n## Required qualifications and experience\n- Relevant educational qualification and professional experience for the role.\n- Practical knowledge of the required domain, tools and applicable processes.\n- Strong communication, analytical and problem-solving skills.\n\n## Role-specific requirements\n${brief}\n\n## Preferred skills\n- Relevant industry experience and demonstrated achievements.\n- Ability to work collaboratively and manage priorities.\n\n## Application process\nInterested candidates may share an updated CV with the recruitment team.`); setBusy(false); };
+  const save=async()=>{ if(!jd.trim()) return showToast('Generate or enter a JD before saving.','warning'); await onSave({id:`jd-${crypto.randomUUID()}`,title,client,location,content:jd,createdAt:new Date().toISOString()}); };
+  return <div className="grid grid-cols-1 xl:grid-cols-5 gap-5"><div className="xl:col-span-2 bg-white border border-slate-200 rounded-xl p-5 space-y-3"><h2 className="font-semibold">JD Generator</h2><p className="text-xs text-slate-500">Enter the role details and a short brief. Generate an editable first draft.</p><label className="block text-xs font-semibold text-slate-600">Job title<input value={title} onChange={e=>setTitle(e.target.value)} className="w-full mt-1 rounded-lg border px-3 py-2 text-sm" placeholder="e.g. Regulatory Affairs Manager" /></label><label className="block text-xs font-semibold text-slate-600">Client<input value={client} onChange={e=>setClient(e.target.value)} className="w-full mt-1 rounded-lg border px-3 py-2 text-sm" placeholder="Client name" /></label><label className="block text-xs font-semibold text-slate-600">Location<input value={location} onChange={e=>setLocation(e.target.value)} className="w-full mt-1 rounded-lg border px-3 py-2 text-sm" placeholder="Hyderabad" /></label><label className="block text-xs font-semibold text-slate-600">Role requirements / prompt<textarea value={prompt} onChange={e=>setPrompt(e.target.value)} rows={7} className="w-full mt-1 rounded-lg border px-3 py-2 text-sm" placeholder="Mention experience, skills, industry, responsibilities, qualifications…" /></label><button onClick={generate} disabled={busy} className="w-full rounded-lg bg-[#0F1B2D] text-white py-2.5 text-sm font-semibold">{busy?'Preparing…':'Generate JD draft'}</button></div><div className="xl:col-span-3 space-y-4"><div className="bg-white border border-slate-200 rounded-xl p-5"><div className="flex items-center justify-between mb-3"><h3 className="font-semibold">Editable job description</h3><button onClick={()=>{if(jd) navigator.clipboard?.writeText(jd); showToast('JD copied.','success');}} className="text-xs text-teal-700">Copy</button></div><textarea value={jd} onChange={e=>setJd(e.target.value)} rows={22} className="w-full rounded-lg border border-slate-200 p-4 text-sm leading-relaxed" placeholder="Your generated JD will appear here. You can edit it before saving."/><button onClick={save} className="mt-3 rounded-lg bg-[#19C3A6] px-4 py-2 text-sm font-semibold text-[#0F1B2D]">Save JD</button></div><div className="bg-white border border-slate-200 rounded-xl p-5"><h3 className="font-semibold mb-3">Saved job descriptions ({savedJds.length})</h3>{savedJds.length===0?<p className="text-sm text-slate-500">No saved JDs yet.</p>:savedJds.map(x=><button key={x.id} onClick={()=>{setTitle(x.title||'');setClient(x.client||'');setLocation(x.location||'');setJd(x.content||'');}} className="block w-full text-left border-t py-3"><span className="font-medium text-sm">{x.title}</span><span className="block text-xs text-slate-500">{x.client} · {x.location}</span></button>)}</div></div></div>;
+}
+
+function RecruitmentBusinessDashboard({ positions }) {
+  const money = n => Number(n||0).toLocaleString('en-IN',{style:'currency',currency:'INR',maximumFractionDigits:0});
+  const status = p => String(p.currentStatus || p.requisitionStatus || 'Open').toLowerCase();
+  const count = s => positions.filter(p=>status(p).includes(s)).length;
+  const actual = positions.reduce((n,p)=>n+Number(p.actualRevenue||0),0);
+  const potential = positions.reduce((n,p)=>n+Number(p.potentialRevenue||0),0);
+  const clients = [...new Set(positions.map(p=>p.clientName).filter(Boolean))];
+  const recruiters = [...new Set(positions.map(p=>p.recruiter).filter(Boolean))];
+  return <div className="space-y-5"><div className="grid grid-cols-2 xl:grid-cols-4 gap-3">{[['Total positions',positions.length],['Open positions',count('open')+count('progress')],['On hold',count('hold')],['Closed',count('closed')]].map(([label,value])=><div key={label} className="bg-white border rounded-xl p-5"><p className="text-xs uppercase tracking-wide text-slate-500">{label}</p><p className="text-3xl font-bold text-[#0F1B2D] mt-2">{value}</p></div>)}</div><div className="grid grid-cols-1 md:grid-cols-2 gap-4"><div className="bg-white border rounded-xl p-5"><h3 className="font-semibold">Revenue overview</h3><div className="mt-4 space-y-3"><div><p className="text-xs text-slate-500">Potential revenue</p><p className="text-2xl font-bold">{money(potential)}</p></div><div><p className="text-xs text-slate-500">Actual revenue</p><p className="text-2xl font-bold text-teal-700">{money(actual)}</p></div></div></div><div className="bg-white border rounded-xl p-5"><h3 className="font-semibold">Client-wise actual revenue</h3>{clients.map(c=><div key={c} className="flex justify-between gap-3 border-b py-2 text-sm"><span>{c}</span><b>{money(positions.filter(p=>p.clientName===c).reduce((n,p)=>n+Number(p.actualRevenue||0),0))}</b></div>)}</div></div><div className="bg-white border rounded-xl p-5"><h3 className="font-semibold mb-3">Recruiter-wise performance</h3>{recruiters.length===0?<p className="text-sm text-slate-500">Recruiter names are not yet assigned to positions.</p>:recruiters.map(r=><div key={r} className="flex justify-between border-b py-2 text-sm"><span>{r}</span><span>{positions.filter(p=>p.recruiter===r).length} positions · {money(positions.filter(p=>p.recruiter===r).reduce((n,p)=>n+Number(p.actualRevenue||0),0))}</span></div>)}</div></div>;
+}
+
+// ============================================================================
 // 7. MAIN APPLICATION SHELL
 // ============================================================================
 
@@ -2768,15 +2820,19 @@ function AeroTrackWorkspace({ session, teamId }) {
   // Persistent State
   const [jobs, setJobs] = useState([]);
   const [candidates, setCandidates] = useState([]);
+  const [positions, setPositions] = useState([]);
+  const [savedJds, setSavedJds] = useState([]);
   const [dataLoading, setDataLoading] = useState(true);
 
   useEffect(() => {
     let alive = true;
     async function loadWorkspace() {
       setDataLoading(true);
-      const [jobResult, candidateResult] = await Promise.all([
+      const [jobResult, candidateResult, positionResult, jdResult] = await Promise.all([
         supabase.from('jobs').select('data').eq('team_id', teamId),
         supabase.from('candidates').select('data').eq('team_id', teamId),
+        supabase.from('positions').select('data').eq('team_id', teamId),
+        supabase.from('job_descriptions').select('data').eq('team_id', teamId),
       ]);
       if (!alive) return;
       if (jobResult.error || candidateResult.error) {
@@ -2785,12 +2841,16 @@ function AeroTrackWorkspace({ session, teamId }) {
         setJobs((jobResult.data || []).map((row) => row.data));
         setCandidates((candidateResult.data || []).map((row) => row.data));
       }
+      if (positionResult.error) showLoadError(positionResult.error); else setPositions((positionResult.data || []).map((row) => row.data));
+      if (jdResult.error) showLoadError(jdResult.error); else setSavedJds((jdResult.data || []).map((row) => row.data));
       setDataLoading(false);
     }
     loadWorkspace();
     const channel = supabase.channel(`aerotrack-team-${teamId}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'jobs', filter: `team_id=eq.${teamId}` }, loadWorkspace)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'candidates', filter: `team_id=eq.${teamId}` }, loadWorkspace)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'positions', filter: `team_id=eq.${teamId}` }, loadWorkspace)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'job_descriptions', filter: `team_id=eq.${teamId}` }, loadWorkspace)
       .subscribe();
     return () => { alive = false; supabase.removeChannel(channel); };
   }, [teamId]);
@@ -2919,6 +2979,24 @@ function AeroTrackWorkspace({ session, teamId }) {
     }
   };
 
+  const handleSavePosition = async (position, isUpdate = false) => {
+    const data = { ...position, updatedBy: actor };
+    const query = isUpdate
+      ? supabase.from('positions').update({ data }).eq('team_id', teamId).eq('data->>id', position.id)
+      : supabase.from('positions').insert({ team_id: teamId, data: { ...data, createdBy: actor, createdAt: new Date().toISOString() } });
+    const { error } = await query;
+    if (error) { showToast(`Could not save position: ${error.message}`, 'warning'); return false; }
+    setPositions(prev => isUpdate ? prev.map(p => p.id === position.id ? data : p) : [data, ...prev]);
+    showToast(isUpdate ? 'Position updated.' : 'Position added.', 'success');
+    return true;
+  };
+  const handleSaveJd = async (jd) => {
+    const data = { ...jd, createdBy: actor };
+    const { error } = await supabase.from('job_descriptions').insert({ team_id: teamId, data });
+    if (error) { showToast(`Could not save JD: ${error.message}`, 'warning'); return; }
+    setSavedJds(prev => [data, ...prev]); showToast('Job description saved.', 'success');
+  };
+
   const handleExportCsv = () => {
     const jobLookup = {};
     jobs.forEach((j) => {
@@ -3002,6 +3080,9 @@ function AeroTrackWorkspace({ session, teamId }) {
       icon: Briefcase,
       badge: jobs.filter((j) => j.status === 'Active').length,
     },
+    { id: 'Position Tracker', label: 'Position Tracker', icon: Briefcase, badge: positions.length },
+    { id: 'JD Generator', label: 'JD Generator', icon: FileText, badge: null },
+    { id: 'Business Dashboard', label: 'Business Dashboard', icon: TrendingUp, badge: null },
     { id: 'Analytics', label: 'Analytics', icon: BarChart3, badge: null },
   ];
 
@@ -3235,10 +3316,13 @@ function AeroTrackWorkspace({ session, teamId }) {
               {activeTab === 'CVs' && 'CV Library'}
               {activeTab === 'Jobs' && 'Job Requisitions & Career Portal'}
               {activeTab === 'Analytics' && 'Recruitment Funnel & Telemetry'}
+              {activeTab === 'Position Tracker' && 'HR Footprints Position Tracker'}
+              {activeTab === 'JD Generator' && 'Job Description Generator'}
+              {activeTab === 'Business Dashboard' && 'Recruitment Business Dashboard'}
             </h1>
             <p className="text-xs text-slate-500">
               {selectedJobFilter === 'ALL'
-                ? `Tracking ${filteredCandidates.length} candidates across ${jobs.length} requisitions`
+                ? (['Position Tracker','JD Generator','Business Dashboard'].includes(activeTab) ? `${positions.length} positions across ${new Set(positions.map(p => p.clientName).filter(Boolean)).size} clients` : `Tracking ${filteredCandidates.length} candidates across ${jobs.length} requisitions`)
                 : `Filtered to ${jobs.find((j) => j.id === selectedJobFilter)?.title || 'Selected Role'}`}
             </p>
           </div>
@@ -3287,6 +3371,9 @@ function AeroTrackWorkspace({ session, teamId }) {
           {activeTab === 'Analytics' && (
             <AnalyticsDashboardView jobs={jobs} candidates={filteredCandidates} />
           )}
+          {activeTab === 'Position Tracker' && <PositionTrackerView positions={positions} onCreate={handleSavePosition} onUpdate={handleSavePosition} showToast={showToast} />}
+          {activeTab === 'JD Generator' && <JobDescriptionGeneratorView savedJds={savedJds} onSave={handleSaveJd} showToast={showToast} />}
+          {activeTab === 'Business Dashboard' && <RecruitmentBusinessDashboard positions={positions} />}
         </main>
       </div>
 
